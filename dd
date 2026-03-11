@@ -1,0 +1,1037 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
+  AreaChart, Area, LabelList, Label, LineChart, Line, ComposedChart
+} from 'recharts';
+import { 
+  LayoutDashboard, 
+  List, 
+  Filter, 
+  AlertCircle, 
+  CheckCircle2, 
+  TrendingUp,
+  Building2,
+  Calendar,
+  CreditCard,
+  FileText,
+  RefreshCw,
+  User,
+  Sun,
+  Moon,
+  Lock,
+  LogOut,
+  X,
+  Menu,
+  Check,
+  ChevronDown,
+  MapPin,
+  AlertTriangle,
+  XCircle,
+  Activity,
+  Clock
+} from 'lucide-react';
+
+// --- Constants ---
+const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1xa8tpUL09ySFXLGAk9lOFxxr_HvteHeSPRZSXMaquTk/export?format=csv&gid=394132066';
+const ADMIN_PASSWORD = '1234';
+
+// --- Helper Functions ---
+const parseCurrency = (value) => {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  const cleanStr = value.toString().replace(/[^0-9.-]/g, '');
+  return parseFloat(cleanStr) || 0;
+};
+
+// แปลง Index ให้ออกมาเป็น Column Letter เช่น 0 -> A, 17 -> R, 53 -> BB
+const getColLetter = (index) => {
+  let letter = '';
+  let temp = index;
+  while (temp >= 0) {
+    letter = String.fromCharCode((temp % 26) + 65) + letter;
+    temp = Math.floor(temp / 26) - 1;
+  }
+  return letter;
+};
+
+const parseCSV = (text) => {
+  const rows = [];
+  let currentRow = [];
+  let currentCell = "";
+  let inQuote = false;
+
+  const cleanText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  for (let i = 0; i < cleanText.length; i++) {
+    const char = cleanText[i];
+    const nextChar = cleanText[i+1];
+
+    if (char === '"') {
+      if (inQuote && nextChar === '"') {
+        currentCell += '"';
+        i++; 
+      } else {
+        inQuote = !inQuote;
+      }
+    } else if (char === ',' && !inQuote) {
+      currentRow.push(currentCell.trim());
+      currentCell = "";
+    } else if (char === '\n' && !inQuote) {
+      currentRow.push(currentCell.trim());
+      if (currentRow.length > 0 && (currentRow.length > 1 || currentRow[0] !== '')) {
+         rows.push(currentRow);
+      }
+      currentRow = [];
+      currentCell = "";
+    } else {
+      currentCell += char;
+    }
+  }
+  if (currentCell || currentRow.length > 0) {
+    currentRow.push(currentCell.trim());
+    rows.push(currentRow);
+  }
+
+  if (rows.length === 0) return [];
+
+  const headers = rows[0].map(h => h.replace(/^"|"$/g, '').trim());
+  
+  const result = [];
+  for(let i = 1; i < rows.length; i++) {
+    const rowData = rows[i];
+    if(rowData.length > 0) {
+        const obj = {};
+        headers.forEach((header, index) => {
+            let val = rowData[index] || '';
+            val = val.replace(/^"|"$/g, '');
+            obj[header] = val; // เก็บด้วยชื่อ Header เดิม
+            
+            // เพิ่มความสามารถในการเข้าถึงด้วย Column Letter (เช่น obj['BB'], obj['AT'])
+            let colLetter = getColLetter(index);
+            obj[colLetter] = val; 
+        });
+        result.push(obj);
+    }
+  }
+  return result;
+};
+
+// --- Custom Components ---
+
+const MultiSelect = ({ label, icon: Icon, options, selected, onChange, isDarkMode }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const toggleOption = (option) => {
+    if (selected.includes(option)) {
+      onChange(selected.filter(item => item !== option));
+    } else {
+      onChange([...selected, option]);
+    }
+  };
+
+  const clearSelection = () => onChange([]);
+  const selectAll = () => onChange(filteredOptions);
+
+  const filteredOptions = options.filter(opt => opt.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  return (
+    <div className="relative group" ref={dropdownRef}>
+      <label className={`text-xs font-semibold ml-1 mb-1.5 block ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{label}</label>
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex items-center justify-between border rounded-xl py-2 pl-9 pr-3 text-sm focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer ${isDarkMode ? 'bg-slate-800 border-slate-700 text-white hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+      >
+        <Icon size={16} className={`absolute left-3 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`} />
+        <span className="truncate flex-1 text-left">
+          {selected.length === 0 ? 'ทั้งหมด' : `${selected.length} รายการ`}
+        </span>
+        <ChevronDown size={14} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className={`absolute z-50 top-full left-0 w-full mt-1 max-h-72 overflow-hidden flex flex-col rounded-xl shadow-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+          <div className="p-2 border-b border-slate-100 dark:border-slate-700">
+             <input 
+                type="text" 
+                placeholder="ค้นหา..." 
+                className={`w-full text-xs py-1.5 px-3 rounded-lg outline-none ${isDarkMode ? 'bg-slate-900 text-white border-slate-700' : 'bg-slate-100 text-slate-800 border-transparent'}`}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+             />
+          </div>
+          <div className="flex justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+             <button onClick={selectAll} className="text-[10px] font-bold text-blue-500 hover:text-blue-600 uppercase tracking-wider">เลือกทั้งหมด</button>
+             <button onClick={clearSelection} className="text-[10px] font-bold text-red-500 hover:text-red-600 uppercase tracking-wider">ล้างค่า</button>
+          </div>
+          <div className="overflow-y-auto p-1 max-h-48">
+            {filteredOptions.map((option) => (
+              <div 
+                key={option}
+                onClick={() => toggleOption(option)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer text-xs transition-colors ${
+                  selected.includes(option) 
+                    ? isDarkMode ? 'bg-blue-900/40 text-blue-200' : 'bg-blue-50 text-blue-700'
+                    : isDarkMode ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-50 text-slate-600'
+                }`}
+              >
+                <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                  selected.includes(option)
+                    ? 'bg-blue-500 border-blue-500' 
+                    : isDarkMode ? 'border-slate-600' : 'border-slate-300'
+                }`}>
+                  {selected.includes(option) && <Check size={10} className="text-white" />}
+                </div>
+                <span className="truncate">{option}</span>
+              </div>
+            ))}
+            {filteredOptions.length === 0 && <div className="p-3 text-center text-xs text-slate-400">ไม่พบข้อมูล</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const StatCard = ({ title, value, subtext, icon: Icon, type, isDarkMode }) => {
+  const gradients = {
+    primary: 'from-blue-500 to-indigo-600',
+    success: 'from-emerald-400 to-green-600',
+    danger: 'from-rose-500 to-red-600',
+    warning: 'from-amber-400 to-orange-500'
+  };
+
+  const texts = {
+    primary: 'text-blue-500',
+    success: 'text-emerald-500',
+    danger: 'text-rose-500',
+    warning: 'text-amber-500'
+  };
+
+  return (
+    <div className={`relative overflow-hidden rounded-2xl p-6 shadow-sm border group hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+      <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${gradients[type]} opacity-10 rounded-bl-full -mr-8 -mt-8 transition-transform group-hover:scale-125 duration-500`}></div>
+      <div className="flex items-start justify-between relative z-10">
+        <div>
+          <p className={`text-sm font-medium mb-1 font-kanit flex items-center gap-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+             {title}
+          </p>
+          <h3 className={`text-4xl font-bold font-kanit tracking-tight mt-2 transition-colors ${isDarkMode ? 'text-white group-hover:text-blue-400' : 'text-slate-800 group-hover:text-blue-600'}`}>
+              {value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </h3>
+          <p className={`text-xs mt-3 font-kanit font-semibold flex items-center gap-1.5 ${texts[type]}`}>
+             {subtext}
+          </p>
+        </div>
+        <div className={`p-4 rounded-2xl bg-gradient-to-br ${gradients[type]} shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300`}>
+          <Icon className="w-6 h-6 text-white" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Login Modal ---
+const LoginModal = ({ isOpen, onClose, onLogin, isDarkMode }) => {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (password === ADMIN_PASSWORD) {
+      onLogin();
+      setPassword('');
+      setError('');
+    } else {
+      setError('รหัสผ่านไม่ถูกต้อง');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className={`w-full max-w-sm p-8 rounded-2xl shadow-2xl ${isDarkMode ? 'bg-slate-800 text-white border border-slate-700' : 'bg-white text-slate-900'}`}>
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-xl font-bold font-kanit flex items-center gap-2">
+            <Lock size={20} className="text-blue-500" /> ยืนยันสิทธิ์เข้าถึง
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-500">
+            <X size={20} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1 font-kanit">รหัสผ่านสำหรับ Admin</label>
+            <input 
+              type="password" 
+              className={`w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:ring-blue-500 outline-none transition-all font-kanit ${isDarkMode ? 'bg-slate-900 border-slate-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="กรุณากรอกรหัสผ่าน (1234)"
+              autoFocus
+            />
+          </div>
+          {error && <p className="text-rose-500 text-xs font-kanit flex items-center gap-1"><AlertTriangle size={12}/> {error}</p>}
+          <button 
+            type="submit"
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold font-kanit transition-all shadow-lg shadow-blue-500/30"
+          >
+            เข้าสู่ระบบ
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default function App() {
+  const [rawData, setRawData] = useState([]);
+  const [data, setData] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [error, setError] = useState(null);
+  
+  const [isDarkMode, setIsDarkMode] = useState(true); // Default to Dark Mode for Dashboard feel
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Filters State based on requested columns
+  const [filters, setFilters] = useState({
+    salesRep: [],      // BB
+    customerGroup: [], // AZ
+    customerCode: [],  // R
+    month: []          // AU
+  });
+
+  const fetchData = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(GOOGLE_SHEET_CSV_URL);
+      if (!response.ok) throw new Error('Failed to fetch data');
+      
+      const text = await response.text();
+      const parsed = parseCSV(text);
+      
+      if (parsed.length > 0) {
+        setRawData(parsed);
+        setLastUpdated(new Date());
+      } else {
+        throw new Error('No data found in CSV');
+      }
+    } catch (err) {
+      console.error("Error fetching Google Sheet:", err);
+      setError("ไม่สามารถเชื่อมต่อ Google Sheet ได้ กรุณาตรวจสอบสิทธิ์การแชร์ไฟล์");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Application of Filters
+  useEffect(() => {
+    let result = rawData;
+    if (filters.salesRep.length > 0) result = result.filter(item => filters.salesRep.includes(item['BB']));
+    if (filters.customerGroup.length > 0) result = result.filter(item => filters.customerGroup.includes(item['AZ']));
+    if (filters.customerCode.length > 0) result = result.filter(item => filters.customerCode.includes(item['R']));
+    if (filters.month.length > 0) result = result.filter(item => filters.month.includes(item['AU']));
+    setData(result);
+  }, [filters, rawData]);
+
+  const handleNavClick = (tab) => {
+    if (tab === 'list' && !isAuthenticated) {
+      setShowLoginModal(true);
+    } else {
+      setActiveTab(tab);
+      setIsSidebarOpen(false);
+    }
+  };
+
+  const handleLoginSuccess = () => {
+    setIsAuthenticated(true);
+    setShowLoginModal(false);
+    setActiveTab('list');
+    setIsSidebarOpen(false);
+  };
+
+  // --- Extract unique filter options ---
+  // กรองหัวตารางและคำที่ผู้ใช้ต้องการเอาออก
+  const uniqueSalesRep = useMemo(() => {
+      const excludeList = ['ecommerce', 'e-commerce', 'sevice center', 'service center', 'other', 'ผู้แทนขาย'];
+      return [...new Set(rawData.map(d => d['BB']).filter(v => {
+          if (!v) return false;
+          return !excludeList.includes(v.toLowerCase().trim());
+      }))].sort();
+  }, [rawData]);
+  
+  const uniqueCustomerGroup = useMemo(() => {
+      return [...new Set(rawData.map(d => d['AZ']).filter(v => v && v.trim() !== 'Customer group'))].sort();
+  }, [rawData]);
+  
+  const uniqueCustomerCode = useMemo(() => {
+      return [...new Set(rawData.map(d => d['R']).filter(v => v && v.trim() !== 'รหัสลูกค้า' && v.trim() !== 'Customer Code'))].sort();
+  }, [rawData]);
+  
+  const uniqueMonth = useMemo(() => {
+      return [...new Set(rawData.map(d => d['AU']).filter(v => v && v.trim() !== 'Month'))];
+  }, [rawData]); 
+
+  // --- Calculations for Top Cards ---
+  const summary = useMemo(() => {
+    let lineItem = 0;
+    let complete = 0;
+    let failed = 0;
+    let inTransit = 0;
+
+    data.forEach(row => {
+        // ข้ามแถวที่เป็นหัวตาราง
+        if (row['AT'] === 'Line item' || row['AT'] === 'AT') return;
+
+        const val = parseCurrency(row['AT']);
+        const status = (row['AR'] || '').toString().trim().toLowerCase();
+        
+        lineItem += val;
+        
+        if (status.includes('complete')) {
+            complete += val;
+        } 
+        else if (status.includes('failed')) {
+            failed += val;
+        }
+        else if (status === '-') {
+            inTransit += val;
+        }
+    });
+
+    return { lineItem, complete, failed, inTransit };
+  }, [data]);
+
+  // --- Calculations for Region Cards (Column AC) & Root Causes (Column AW) ---
+  const regionDataArray = useMemo(() => {
+    const regionMap = {};
+    const excludeRegions = ['e-commerce', 'ecommerce', 'ไม่ระบุ', 'region'];
+
+    data.forEach(row => {
+        const regionRaw = (row['AC'] || 'ไม่ระบุ').toString().trim();
+        if (excludeRegions.includes(regionRaw.toLowerCase())) return; // ตัดการ์ดภูมิภาคที่ไม่ต้องการ
+
+        const region = regionRaw;
+        const val = parseCurrency(row['AT']);
+        const status = (row['AR'] || '').toString().trim().toLowerCase();
+        const rootCause = row['AW'] || 'ไม่มีข้อมูล/ไม่ระบุ';
+
+        if (!regionMap[region]) {
+            regionMap[region] = { 
+                name: region, 
+                total: 0, 
+                complete: 0, 
+                failed: 0, 
+                inTransit: 0,
+                rootCauses: {},
+                rootCauseTotalCount: 0 // เพิ่มตัวแปรเก็บยอดรวมของ root cause ทั้งหมดในภาคนั้น
+            };
+        }
+
+        regionMap[region].total += val;
+        if (status.includes('complete')) regionMap[region].complete += val;
+        else if (status.includes('failed')) regionMap[region].failed += val;
+        else if (status === '-') regionMap[region].inTransit += val;
+
+        // นับ Root Cause (เฉพาะรายการที่มีปัญหาหรือ Failed)
+        if (status.includes('failed') || (rootCause !== 'ไม่มีข้อมูล/ไม่ระบุ' && rootCause.trim() !== 'Root Cause')) {
+           regionMap[region].rootCauses[rootCause] = (regionMap[region].rootCauses[rootCause] || 0) + 1;
+           regionMap[region].rootCauseTotalCount += 1; // นับรวมจำนวนเคสที่มี root cause
+        }
+    });
+
+    // Format Data & Find Top 3 Root Causes per region
+    return Object.values(regionMap)
+        .sort((a, b) => b.total - a.total)
+        .map(region => {
+            const topRC = Object.entries(region.rootCauses)
+                .filter(([rc]) => rc.trim() !== '')
+                .sort((a, b) => b[1] - a[1]) // Sort by count descending
+                .slice(0, 3)
+                .map(([rcName, count]) => {
+                    // คำนวณ % จากยอดรวม root cause ของภาคนั้น
+                    const pct = region.rootCauseTotalCount > 0 
+                        ? ((count / region.rootCauseTotalCount) * 100).toFixed(1) 
+                        : 0;
+                    return { name: rcName, count, pct };
+                });
+            
+            const totalVal = region.total > 0 ? region.total : 1;
+            
+            return { 
+                ...region, 
+                topRC,
+                completePct: Number(((region.complete / totalVal) * 100).toFixed(1)),
+                failedPct: Number(((region.failed / totalVal) * 100).toFixed(1)),
+                inTransitPct: Number(((region.inTransit / totalVal) * 100).toFixed(1))
+            };
+        });
+
+  }, [data]);
+
+  // --- Chart Data: Month to Month Comparison ---
+  const monthToMonthData = useMemo(() => {
+      const group = {};
+      data.forEach(row => {
+          const month = row['AU'] ? row['AU'].trim() : '';
+          // ข้ามถ้าว่างเปล่าหรือเป็นหัวตาราง
+          if (!month || month === 'Month') return;
+          
+          const val = parseCurrency(row['AT']);
+          const status = (row['AR'] || '').toString().trim().toLowerCase();
+
+          if (!group[month]) group[month] = { name: month, total: 0, complete: 0, failed: 0, inTransit: 0 };
+          
+          group[month].total += val;
+
+          // แยกเก็บข้อมูลตามสถานะ
+          if (status.includes('complete')) {
+              group[month].complete += val;
+          } else if (status.includes('failed')) {
+              group[month].failed += val;
+          } else if (status === '-') {
+              group[month].inTransit += val;
+          }
+      });
+
+      // จัดเรียงตามลำดับเดือน (ถ้าชื่อตรง)
+      const monthOrder = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return Object.values(group).sort((a, b) => {
+          const idxA = monthOrder.indexOf(a.name);
+          const idxB = monthOrder.indexOf(b.name);
+          if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+          return 0;
+      }).map(item => ({
+          ...item,
+          // คำนวณเป็น % โดยนำค่าย่อยหารด้วยยอดเต็ม (total) คูณ 100
+          completePct: item.total > 0 ? Number(((item.complete / item.total) * 100).toFixed(1)) : 0,
+          failedPct: item.total > 0 ? Number(((item.failed / item.total) * 100).toFixed(1)) : 0,
+          inTransitPct: item.total > 0 ? Number(((item.inTransit / item.total) * 100).toFixed(1)) : 0,
+      }));
+  }, [data]);
+
+  // --- Chart Data: SLA Status ---
+  const statusPieData = useMemo(() => {
+      return [
+          { name: 'Complete', value: summary.complete },
+          { name: 'Failed', value: summary.failed },
+          { name: 'In Transit', value: summary.inTransit },
+          { name: 'Other', value: summary.lineItem - summary.complete - summary.failed - summary.inTransit }
+      ].filter(d => d.value > 0);
+  }, [summary]);
+
+  const COLORS = ['#10b981', '#f43f5e', '#f59e0b', '#64748b', '#3b82f6', '#8b5cf6'];
+  const THEME_CLASSES = isDarkMode ? 'bg-slate-950 text-white' : 'bg-[#f1f5f9] text-slate-800';
+
+  return (
+    <div className={`flex h-screen font-kanit overflow-hidden transition-colors duration-300 ${THEME_CLASSES}`}>
+      <style>
+        {`
+          @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@200;300;400;500;600;700&display=swap');
+          .font-kanit { font-family: 'Kanit', sans-serif; }
+          ::-webkit-scrollbar { width: 6px; height: 6px; }
+          ::-webkit-scrollbar-track { background: transparent; }
+          ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+          ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        `}
+      </style>
+
+      <LoginModal 
+        isOpen={showLoginModal} 
+        onClose={() => setShowLoginModal(false)} 
+        onLogin={handleLoginSuccess}
+        isDarkMode={isDarkMode}
+      />
+      
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/60 z-40 lg:hidden backdrop-blur-sm"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* --- SIDEBAR (Filters Area) --- */}
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static flex flex-col shadow-2xl ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} ${isDarkMode ? 'bg-slate-900 border-r border-slate-800' : 'bg-white border-r border-slate-200'}`}>
+        
+        <div className="p-6 pb-4 shrink-0 border-b border-slate-100 dark:border-slate-800/50">
+          <div className="flex items-center gap-3">
+            <div className="bg-gradient-to-br from-indigo-500 to-blue-600 p-2.5 rounded-xl shadow-lg shadow-blue-500/30">
+              <Activity size={24} className="text-white" />
+            </div>
+            <div>
+               <h1 className="text-xl font-bold tracking-tight leading-none text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-500">
+                 SLA Analyzer
+               </h1>
+               <p className="text-[11px] font-medium text-slate-400 mt-1 uppercase tracking-wider">Service Level Dashboard</p>
+            </div>
+          </div>
+        </div>
+        
+        <nav className="p-4 space-y-2 shrink-0">
+          <button 
+            onClick={() => handleNavClick('dashboard')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-semibold text-sm ${activeTab === 'dashboard' 
+              ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' 
+              : isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-50'}`}
+          >
+            <LayoutDashboard size={18} /> ภาพรวม (Dashboard)
+          </button>
+          <button 
+            onClick={() => handleNavClick('list')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all font-semibold text-sm ${activeTab === 'list' 
+              ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/30' 
+              : isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-50'}`}
+          >
+            <span className="flex items-center gap-3"><List size={18} /> ข้อมูลดิบ (Raw Data)</span>
+            {!isAuthenticated && <Lock size={14} className="opacity-50" />}
+          </button>
+        </nav>
+
+        {/* --- FILTERS --- */}
+        <div className="px-5 mt-2 pt-4 flex-1 overflow-y-auto">
+           <div className="flex items-center justify-between mb-4">
+              <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                <Filter size={14} /> ตัวกรองข้อมูล
+              </h3>
+              {(filters.salesRep.length > 0 || filters.customerGroup.length > 0 || filters.customerCode.length > 0 || filters.month.length > 0) && (
+                  <span className="bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold animate-pulse">
+                      Active
+                  </span>
+              )}
+           </div>
+           
+           <div className="space-y-4 pb-8">
+              <MultiSelect 
+                  label="ผู้แทนขาย"
+                  icon={User}
+                  options={uniqueSalesRep}
+                  selected={filters.salesRep}
+                  onChange={(newVal) => setFilters({...filters, salesRep: newVal})}
+                  isDarkMode={isDarkMode}
+              />
+              <MultiSelect 
+                  label="กลุ่มลูกค้า"
+                  icon={Building2}
+                  options={uniqueCustomerGroup}
+                  selected={filters.customerGroup}
+                  onChange={(newVal) => setFilters({...filters, customerGroup: newVal})}
+                  isDarkMode={isDarkMode}
+              />
+              <MultiSelect 
+                  label="รหัสลูกค้า"
+                  icon={CreditCard}
+                  options={uniqueCustomerCode}
+                  selected={filters.customerCode}
+                  onChange={(newVal) => setFilters({...filters, customerCode: newVal})}
+                  isDarkMode={isDarkMode}
+              />
+              <MultiSelect 
+                  label="เดือน"
+                  icon={Calendar}
+                  options={uniqueMonth}
+                  selected={filters.month}
+                  onChange={(newVal) => setFilters({...filters, month: newVal})}
+                  isDarkMode={isDarkMode}
+              />
+              
+              <button 
+                  onClick={() => setFilters({ salesRep: [], customerGroup: [], customerCode: [], month: [] })}
+                  className={`w-full text-xs hover:bg-rose-500 hover:text-white rounded-xl font-bold py-3 text-center transition-all border ${isDarkMode ? 'border-slate-700 text-slate-400 hover:border-rose-500' : 'border-slate-200 text-slate-500'}`}
+              >
+                  ล้างค่าตัวกรองทั้งหมด
+              </button>
+           </div>
+        </div>
+
+        <div className={`mt-auto p-4 shrink-0 border-t ${isDarkMode ? 'border-slate-800/50' : 'border-slate-100'}`}>
+           {isAuthenticated ? (
+             <div className={`flex items-center justify-between p-3 rounded-xl border ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center gap-3">
+                   <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold text-sm shadow-md">A</div>
+                   <div>
+                      <p className="text-sm font-bold leading-none mb-1">Admin User</p>
+                      <p className="text-[10px] text-emerald-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Online</p>
+                   </div>
+                </div>
+                <button onClick={handleLogout} className="text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 p-2 rounded-lg transition-colors">
+                  <LogOut size={18} />
+                </button>
+             </div>
+           ) : (
+             <button 
+                onClick={() => setShowLoginModal(true)}
+                className={`w-full text-sm font-semibold py-3 flex items-center justify-center gap-2 rounded-xl transition-all border ${isDarkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+             >
+               <Lock size={16} /> เข้าสู่ระบบเพื่อดูข้อมูลดิบ
+             </button>
+           )}
+        </div>
+      </aside>
+
+      {/* --- MAIN CONTENT --- */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
+        <header className={`px-4 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors duration-300 border-b z-10 ${isDarkMode ? 'bg-slate-900/80 backdrop-blur-md border-slate-800' : 'bg-white/80 backdrop-blur-md border-slate-200'}`}>
+           <div className="flex items-center w-full sm:w-auto gap-4">
+              <button 
+                onClick={() => setIsSidebarOpen(true)}
+                className={`p-2 rounded-lg lg:hidden ${isDarkMode ? 'text-slate-200 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'}`}
+              >
+                <Menu size={24} />
+              </button>
+              <div>
+                <span className={`font-bold text-xl block ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                    {activeTab === 'dashboard' ? 'SLA Performance Overview' : 'ตารางข้อมูลดิบ (Raw Data)'}
+                </span>
+                <span className="text-xs text-slate-500 font-medium">กรองข้อมูลไปแล้ว {data.length} จาก {rawData.length} รายการ</span>
+              </div>
+           </div>
+
+           <div className="flex items-center justify-between w-full sm:w-auto gap-4">
+              {error && (
+                <div className="text-[10px] text-rose-500 bg-rose-500/10 px-3 py-1.5 rounded-full flex items-center gap-1">
+                  <AlertTriangle size={12} /> ข้อมูลจำลอง (พบข้อผิดพลาดการเชื่อมต่อ)
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <button 
+                    onClick={() => setIsDarkMode(!isDarkMode)}
+                    className={`p-2.5 rounded-full transition-all shadow-sm ${isDarkMode ? 'bg-slate-800 text-yellow-400 hover:bg-slate-700' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                    {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
+                <button 
+                    onClick={fetchData} 
+                    className={`p-2.5 rounded-full transition-all flex items-center gap-2 px-5 shadow-sm ${isDarkMode ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                >
+                    <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                    <span className="text-xs font-bold hidden sm:block">รีเฟรชข้อมูล</span>
+                </button>
+              </div>
+           </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-4 lg:p-8 scroll-smooth">
+          
+          {activeTab === 'dashboard' && (
+            <div className="space-y-8 max-w-[1600px] mx-auto pb-12">
+              
+              {/* TOP CARDS: Line Item, Complete, Failed, In Transit */}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                <StatCard 
+                  title="Line Item" 
+                  value={summary.lineItem}
+                  subtext="ผลรวมยอดทั้งหมด"
+                  icon={Activity}
+                  type="primary"
+                  isDarkMode={isDarkMode}
+                />
+                <StatCard 
+                  title="Complete" 
+                  value={summary.complete}
+                  subtext={`คิดเป็น ${summary.lineItem > 0 ? ((summary.complete / summary.lineItem) * 100).toFixed(1) : 0}% ของทั้งหมด`}
+                  icon={CheckCircle2}
+                  type="success"
+                  isDarkMode={isDarkMode}
+                />
+                <StatCard 
+                  title="Failed" 
+                  value={summary.failed}
+                  subtext={`คิดเป็น ${summary.lineItem > 0 ? ((summary.failed / summary.lineItem) * 100).toFixed(1) : 0}% ของทั้งหมด`}
+                  icon={XCircle}
+                  type="danger"
+                  isDarkMode={isDarkMode}
+                />
+                <StatCard 
+                  title="In Transit" 
+                  value={summary.inTransit}
+                  subtext={`คิดเป็น ${summary.lineItem > 0 ? ((summary.inTransit / summary.lineItem) * 100).toFixed(1) : 0}% ของทั้งหมด`}
+                  icon={Clock}
+                  type="warning"
+                  isDarkMode={isDarkMode}
+                />
+              </div>
+
+              {/* REGION CARDS */}
+              <div>
+                <h2 className={`text-xl font-bold mb-6 flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                   <MapPin size={24} className="text-indigo-500" />
+                   วิเคราะห์ตามภูมิภาค (Region)
+                </h2>
+                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                   {regionDataArray.length > 0 ? regionDataArray.map((region, idx) => (
+                      <div key={idx} className={`rounded-2xl border overflow-hidden flex flex-col shadow-sm hover:shadow-xl transition-all duration-300 ${isDarkMode ? 'bg-slate-800/80 border-slate-700 backdrop-blur-sm' : 'bg-white border-slate-200'}`}>
+                         {/* Card Header */}
+                         <div className={`p-5 border-b flex justify-between items-center ${isDarkMode ? 'border-slate-700/50 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
+                            <h3 className={`font-bold text-lg flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                               <div className="w-2 h-6 bg-indigo-500 rounded-full"></div>
+                               {region.name}
+                            </h3>
+                            <span className="text-xs font-bold text-slate-400 bg-slate-100 dark:bg-slate-700 px-3 py-1 rounded-full">
+                               ยอดรวม: {region.total.toLocaleString()}
+                            </span>
+                         </div>
+                         
+                         {/* Visual Bar for Complete vs Failed vs In Transit */}
+                         <div className="px-5 pt-5 pb-2">
+                             <div className="h-3 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden flex">
+                                 <div 
+                                    className="h-full bg-emerald-500" 
+                                    style={{ width: `${region.completePct}%` }}
+                                    title={`Complete: ${region.complete.toLocaleString()} (${region.completePct}%)`}
+                                 ></div>
+                                 <div 
+                                    className="h-full bg-rose-500" 
+                                    style={{ width: `${region.failedPct}%` }}
+                                    title={`Failed: ${region.failed.toLocaleString()} (${region.failedPct}%)`}
+                                 ></div>
+                                 <div 
+                                    className="h-full bg-amber-500" 
+                                    style={{ width: `${region.inTransitPct}%` }}
+                                    title={`In Transit: ${region.inTransit.toLocaleString()} (${region.inTransitPct}%)`}
+                                 ></div>
+                             </div>
+                             <div className="grid grid-cols-3 gap-2 mt-3 text-[10px] lg:text-xs font-medium">
+                                 <div className="text-emerald-500 flex flex-col items-start">
+                                     <span className="flex items-center gap-1"><CheckCircle2 size={12}/> Complete</span>
+                                     <span className="font-bold">{region.completePct}% <span className="text-[10px] text-emerald-600/60 dark:text-emerald-400/60 font-normal">({region.complete.toLocaleString()})</span></span>
+                                 </div>
+                                 <div className="text-rose-500 flex flex-col items-center">
+                                     <span className="flex items-center gap-1"><XCircle size={12}/> Failed</span>
+                                     <span className="font-bold">{region.failedPct}% <span className="text-[10px] text-rose-600/60 dark:text-rose-400/60 font-normal">({region.failed.toLocaleString()})</span></span>
+                                 </div>
+                                 <div className="text-amber-500 flex flex-col items-end">
+                                     <span className="flex items-center gap-1"><Clock size={12}/> In Transit</span>
+                                     <span className="font-bold">{region.inTransitPct}% <span className="text-[10px] text-amber-600/60 dark:text-amber-400/60 font-normal">({region.inTransit.toLocaleString()})</span></span>
+                                 </div>
+                             </div>
+                         </div>
+
+                         {/* Top 3 Root Causes */}
+                         <div className="p-5 flex-1 flex flex-col">
+                            <h4 className={`text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                               <AlertTriangle size={14} className="text-amber-500" /> Top 3 Root Causes
+                            </h4>
+                            <div className="space-y-3 flex-1">
+                               {region.topRC.length > 0 ? region.topRC.map((rc, index) => (
+                                  <div key={index} className="flex flex-col gap-1">
+                                     <div className="flex justify-between text-xs items-center">
+                                        <span className={`font-medium truncate pr-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{index + 1}. {rc.name}</span>
+                                        <span className="font-bold text-rose-500 bg-rose-50 dark:bg-rose-500/10 px-2 py-0.5 rounded text-[10px] whitespace-nowrap">
+                                           {rc.pct}% <span className="opacity-60 font-normal">({rc.count})</span>
+                                        </span>
+                                     </div>
+                                  </div>
+                               )) : (
+                                  <div className="flex h-full items-center justify-center text-xs text-slate-400 italic bg-slate-50 dark:bg-slate-900/50 rounded-lg p-4">
+                                     ไม่มีข้อมูล Root Cause หรือรายการ Failed
+                                  </div>
+                               )}
+                            </div>
+                         </div>
+                      </div>
+                   )) : (
+                      <div className="col-span-full p-12 text-center text-slate-400 border border-dashed rounded-2xl dark:border-slate-700">
+                         ไม่พบข้อมูลภูมิภาคตามตัวกรองที่เลือก
+                      </div>
+                   )}
+                </div>
+              </div>
+
+              {/* OVERALL CHARTS */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-4">
+                 
+                 {/* Pie Chart: Status Overview */}
+                 <div className={`p-6 rounded-2xl shadow-sm border flex flex-col ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+                    <h3 className={`text-lg font-bold mb-6 flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                       <PieChart className="text-emerald-500" />
+                       สัดส่วน SLA Status (ภาพรวม)
+                    </h3>
+                    <div className="h-72 relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={statusPieData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={70}
+                            outerRadius={100}
+                            paddingAngle={5}
+                            dataKey="value"
+                            cornerRadius={6}
+                            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(1)}%`}
+                            labelLine={true}
+                          >
+                            {statusPieData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.name === 'Complete' ? '#10b981' : entry.name === 'Failed' ? '#f43f5e' : entry.name === 'In Transit' ? '#f59e0b' : '#64748b'} strokeWidth={0} />
+                            ))}
+                            <Label
+                                content={({ viewBox }) => {
+                                  if (viewBox && viewBox.cx && viewBox.cy) {
+                                    const { cx, cy } = viewBox;
+                                    return (
+                                      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle">
+                                        <tspan x={cx} y={cy} dy="-5" fontSize="24" fontWeight="bold" fill={isDarkMode ? '#fff' : '#1e293b'}>
+                                          {summary.lineItem.toLocaleString()}
+                                        </tspan>
+                                        <tspan x={cx} y={cy} dy="15" fontSize="12" fill="#94a3b8">
+                                          รวมทั้งหมด
+                                        </tspan>
+                                      </text>
+                                    );
+                                  }
+                                  return null;
+                                }}
+                                position="center"
+                              />
+                          </Pie>
+                          <RechartsTooltip 
+                              contentStyle={{ borderRadius: '12px', border: 'none', backgroundColor: isDarkMode ? '#1e293b' : '#fff', color: isDarkMode ? '#fff' : '#000', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }} 
+                              formatter={(value, name) => {
+                                  // คำนวณเป็นเปอร์เซ็นต์เทียบกับยอด Line Item ทั้งหมด
+                                  const pct = summary.lineItem > 0 ? ((value / summary.lineItem) * 100).toFixed(1) : 0;
+                                  return [`${pct}% (${value.toLocaleString()})`, name];
+                              }}
+                          />
+                          <Legend layout="horizontal" verticalAlign="bottom" align="center" iconType="circle" />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                 </div>
+
+                 {/* Bar Chart: Month to Month Comparison */}
+                 <div className={`p-6 rounded-2xl shadow-sm border flex flex-col ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+                    <h3 className={`text-lg font-bold mb-6 flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                       <Calendar className="text-blue-500" />
+                       เปรียบเทียบยอด Line Item และสถานะ (Month to Month)
+                    </h3>
+                    <div className="h-72">
+                       <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={monthToMonthData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#f1f5f9'} />
+                             <XAxis dataKey="name" tick={{ fontSize: 11, fill: isDarkMode ? '#94a3b8' : '#64748b' }} axisLine={false} tickLine={false} />
+                             {/* แกน Y ซ้ายสำหรับยอดรวม Line Item */}
+                             <YAxis yAxisId="left" tickFormatter={(val) => val.toLocaleString()} tick={{ fontSize: 10, fill: isDarkMode ? '#94a3b8' : '#64748b' }} axisLine={false} tickLine={false} />
+                             {/* แกน Y ขวาสำหรับเปอร์เซ็นต์ (%) */}
+                             <YAxis yAxisId="right" orientation="right" tickFormatter={(val) => `${val}%`} tick={{ fontSize: 10, fill: isDarkMode ? '#94a3b8' : '#64748b' }} axisLine={false} tickLine={false} />
+                             <RechartsTooltip 
+                                 contentStyle={{ borderRadius: '12px', border: 'none', backgroundColor: isDarkMode ? '#1e293b' : '#fff', color: isDarkMode ? '#fff' : '#000', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}
+                                 formatter={(value, name) => {
+                                     // ถ้าชื่อข้อมูลมีคำว่า (%) ให้ใส่เครื่องหมาย % ต่อท้ายตัวเลข
+                                     if (name.includes('%')) return [`${value}%`, name];
+                                     return [value.toLocaleString(), name];
+                                 }}
+                             />
+                             <Legend wrapperStyle={{ fontSize: '12px' }} />
+                             <Bar yAxisId="left" dataKey="total" name="Line Item (รวม)" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                             <Bar yAxisId="right" dataKey="completePct" name="Complete (%)" fill="#10b981" radius={[4, 4, 0, 0]} />
+                             <Bar yAxisId="right" dataKey="failedPct" name="Failed (%)" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                             <Bar yAxisId="right" dataKey="inTransitPct" name="In Transit (%)" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                             {/* เส้น Trend Line สำหรับ Complete และ Failed (แบบเปอร์เซ็นต์) */}
+                             <Line yAxisId="right" type="monotone" dataKey="completePct" name="Trend Complete (%)" stroke="#10b981" strokeWidth={3} dot={{ r: 4, strokeWidth: 2, fill: isDarkMode ? '#1e293b' : '#fff' }} activeDot={{ r: 6 }} />
+                             <Line yAxisId="right" type="monotone" dataKey="failedPct" name="Trend Failed (%)" stroke="#f43f5e" strokeWidth={3} dot={{ r: 4, strokeWidth: 2, fill: isDarkMode ? '#1e293b' : '#fff' }} activeDot={{ r: 6 }} />
+                          </ComposedChart>
+                       </ResponsiveContainer>
+                    </div>
+                 </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* --- RAW DATA LIST --- */}
+          {activeTab === 'list' && isAuthenticated && (
+            <div className={`rounded-2xl shadow-xl border overflow-hidden ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+               <div className={`p-4 lg:p-6 border-b flex flex-col sm:flex-row justify-between items-center gap-4 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
+                 <h3 className={`text-lg font-bold flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                   <FileText size={20} className="text-indigo-500" /> ตารางข้อมูลดิบ (แสดงผลตาม Header จากไฟล์ Sheet)
+                 </h3>
+                 <div className="text-sm font-medium bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 px-3 py-1 rounded-lg">
+                    กำลังแสดงผล 100 แถวแรก
+                 </div>
+               </div>
+               <div className="overflow-x-auto relative">
+                 <table className="w-full text-left border-collapse min-w-[1200px]">
+                   <thead className="sticky top-0 z-10">
+                     <tr className={`text-xs uppercase tracking-wider ${isDarkMode ? 'bg-slate-900 text-slate-400' : 'bg-slate-100 text-slate-600'}`}>
+                       {data.length > 0 && Object.keys(data[0])
+                          .filter(k => !/^[A-Z]{1,2}$/.test(k)) // Filter out the helper keys (A, B, C...)
+                          .slice(0, 15) // Show first 15 columns max
+                          .map((header, idx) => (
+                         <th key={idx} className="p-4 font-semibold border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">
+                           {header}
+                         </th>
+                       ))}
+                     </tr>
+                   </thead>
+                   <tbody className="text-sm divide-y divide-slate-100 dark:divide-slate-700/50">
+                     {data.length > 0 ? (
+                       data.slice(0, 100).map((row, index) => {
+                         const headers = Object.keys(row).filter(k => !/^[A-Z]{1,2}$/.test(k)).slice(0, 15);
+                         return (
+                         <tr key={index} className={`transition-colors group ${isDarkMode ? 'hover:bg-slate-700/30' : 'hover:bg-blue-50/40'}`}>
+                           {headers.map((header, idx) => (
+                             <td key={idx} className={`p-4 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} truncate max-w-[200px]`}>
+                               {row[header]}
+                             </td>
+                           ))}
+                         </tr>
+                       )})
+                     ) : (
+                       <tr>
+                         <td colSpan="10" className="p-16 text-center text-slate-400 font-medium text-lg">
+                           {isLoading ? (
+                               <span className="flex items-center justify-center gap-2"><RefreshCw className="animate-spin" /> กำลังโหลดข้อมูล...</span>
+                           ) : 'ไม่พบข้อมูลตามเงื่อนไขที่เลือก กรุณาปรับเปลี่ยนตัวกรอง'}
+                         </td>
+                       </tr>
+                     )}
+                   </tbody>
+                 </table>
+               </div>
+            </div>
+          )}
+
+          {activeTab === 'list' && !isAuthenticated && (
+             <div className="flex flex-col items-center justify-center h-[70vh] text-center space-y-6">
+                <div className="p-6 rounded-full bg-blue-50 dark:bg-slate-800 shadow-inner">
+                   <Lock size={64} className="text-blue-500" />
+                </div>
+                <div>
+                   <h3 className={`text-3xl font-black mb-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>พื้นที่จำกัดสิทธิ์</h3>
+                   <p className="text-slate-500 font-medium">กรุณาเข้าสู่ระบบด้วยรหัสผ่านผู้ดูแลระบบ (1234) เพื่อดูและจัดการข้อมูลดิบ</p>
+                </div>
+                <button 
+                  onClick={() => setShowLoginModal(true)}
+                  className="px-8 py-3.5 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-xl shadow-lg shadow-blue-500/30 transition-all font-bold text-lg hover:-translate-y-1"
+                >
+                  เข้าสู่ระบบ Admin
+                </button>
+             </div>
+          )}
+
+        </div>
+      </main>
+    </div>
+  );
+}
